@@ -1,0 +1,125 @@
+#include <EEPROM.h>
+
+#define UP 22 // BTN1
+#define DOWN 23 // BTN2
+#define LED_CONFIG 27 // el led 1=Indica configuración
+#define LED_CURING 26 // el led 2=Indica proceso de curado
+#define LED_TIMER 25 // el led 3=Parpadeo del temporizador
+
+unsigned int BAUDRATE = 9600;
+volatile unsigned long lastDebounceTime = 0;
+const unsigned long debounceDelay = 50;
+unsigned long previousMillis = 0;
+unsigned int curingTime = 0;
+int EEPROM_ADDR = 0;
+int MAX_TIME = 10;
+int MIN_TIME = 1;
+
+bool curingActive = false;
+int remainingTime = 0;
+unsigned int lastCuringTimePrinted = 0;
+unsigned long curingEndTime = 0; // Tiempo en que el curado terminó
+
+void setup() {
+  Serial.begin(BAUDRATE);
+
+  // Leer tiempo de curado almacenado en la EEPROM
+  curingTime = EEPROM.read(EEPROM_ADDR);
+  if (curingTime > MAX_TIME || curingTime < MIN_TIME) {
+    curingTime = MIN_TIME;
+  }
+
+  pinMode(UP, INPUT);
+  pinMode(DOWN, INPUT);
+  pinMode(LED_CONFIG, OUTPUT);
+  pinMode(LED_CURING, OUTPUT);
+  pinMode(LED_TIMER, OUTPUT);
+
+  digitalWrite(LED_CONFIG, HIGH);
+
+  attachInterrupt(digitalPinToInterrupt(UP), incrementTime, FALLING);
+  attachInterrupt(digitalPinToInterrupt(DOWN), decrementTime, FALLING);
+}
+
+void loop() {
+  // Solo imprime el tiempo de curado cuando haya un cambio
+  if (curingTime != lastCuringTimePrinted && !curingActive) {
+    Serial.print("Tiempo de curado configurado: ");
+    Serial.println(curingTime);
+    lastCuringTimePrinted = curingTime;
+  }
+
+  // Verificar si ambos botones están presionados 
+  if (digitalRead(UP) == LOW && digitalRead(DOWN) == LOW && !curingActive && (millis() - curingEndTime > 1000)) {
+    startCuring();
+  }
+
+  // Si el proceso de curado ya se encuentra activo
+  if (curingActive) {
+    unsigned long currentMillis = millis();
+
+    // Parpadear led de tiempo cada segundo
+    if (currentMillis - previousMillis >= 1000 && remainingTime > 0) {  
+      previousMillis = currentMillis;
+      remainingTime--;
+
+      // Alternar el estado del led de tiempo para parpadear
+      digitalWrite(LED_TIMER, !digitalRead(LED_TIMER));
+
+      Serial.print("Tiempo restante: ");
+      Serial.println(remainingTime);
+
+      // Cuando el tiempo de curado termina
+      if (remainingTime <= 0) {
+        endCuring();
+      }
+    }
+  }
+}
+
+void incrementTime() {
+  if (millis() - lastDebounceTime > debounceDelay && !curingActive) {
+    if (curingTime < MAX_TIME) {
+      curingTime++;
+      EEPROM.write(EEPROM_ADDR, curingTime);
+      lastDebounceTime = millis();
+    }
+  }
+}
+
+void decrementTime() {
+  if (millis() - lastDebounceTime > debounceDelay && !curingActive) {
+    if (curingTime > MIN_TIME) {
+      curingTime--;
+      EEPROM.write(EEPROM_ADDR, curingTime);
+      lastDebounceTime = millis();
+    }
+  }
+}
+
+void startCuring() {
+  curingActive = true;
+  remainingTime = curingTime; 
+
+  // Apagar led de configuración y  encender led de curado
+  digitalWrite(LED_CONFIG, LOW);
+  digitalWrite(LED_CURING, HIGH);
+  digitalWrite(LED_TIMER, HIGH);
+
+  Serial.println("Iniciando curado...");
+}
+
+void endCuring() {
+  curingActive = false;
+  curingEndTime = millis(); 
+
+  // Apagamos el led de curado y de temporizador y encendemos el led de configuración
+  digitalWrite(LED_CURING, LOW);
+  digitalWrite(LED_TIMER, LOW);
+  digitalWrite(LED_CONFIG, HIGH);
+
+  Serial.println("-->CURADO COMPLETADO EXITOSAMENTE<--");
+
+
+  delay(1000);
+}
